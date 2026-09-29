@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="id"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LeleKu - SIA Pembesaran Lele</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{colors:{air:'#0f766e',lumpur:'#5b4636',emas:'#f2b632',muda:'#f0f7f4'},fontFamily:{sans:['Poppins','sans-serif']}}}}</script>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+.in{width:100%;border:1px solid #c9d8d2;border-radius:.5rem;padding:.5rem;background:#fff;font-size:.875rem}
+.in:focus{outline:2px solid #0f766e55}
+.card{transition:.25s}.card:hover{transform:translateY(-3px);box-shadow:0 8px 20px #0f766e22}
+.nav{transition:.2s;white-space:nowrap}.nav:hover{background:#ffffff22}.nav.on{background:#f2b632;color:#2e2218}
+.btn{background:#0f766e;color:#fff;border-radius:.5rem;padding:.5rem 1rem;transition:.2s}.btn:hover{background:#0b5b55}
+th,td{padding:.5rem;text-align:left;border-bottom:1px solid #dfece6;font-size:.85rem;white-space:nowrap}th{background:#e3f0ea}
+</style></head>
+<body class="font-sans bg-muda text-stone-800">
+<div class="md:flex min-h-screen">
+  <aside class="bg-lumpur text-white md:w-56 md:min-h-screen">
+    <div class="hidden md:block p-4 text-lg font-semibold">🐟 LeleKu</div>
+    <nav id="nav" class="flex md:flex-col gap-1 p-2 overflow-x-auto"></nav>
+  </aside>
+  <div class="flex-1 min-w-0">
+    <header class="flex flex-wrap items-center justify-between gap-2 p-4 bg-white border-b border-teal-100">
+      <h2 id="ttl" class="font-semibold text-lumpur text-lg"></h2>
+      <div class="flex gap-2 items-center"><span class="text-sm">Kolam:</span>
+        <select id="fs" class="in !w-auto" onchange="pid=this.value;render()"></select></div>
+    </header>
+    <main id="main" class="p-4"></main>
+  </div>
+</div>
+
+<script>
+const sb = supabase.createClient('https://nwfahqosvsklmirtxbyd.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53ZmFocW9zdnNrbG1pcnR4YnlkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA2NzA5NjcsImV4cCI6MjEwNjI0Njk2N30.15jfcxp0QKmpGy-3p_UuPTjuISI0qOw8mogxDav6jUo'); 
+const $ = s => document.querySelector(s);
+const rp = n => 'Rp ' + Math.round(n || 0).toLocaleString('id-ID');
+const nf = n => (+n || 0).toLocaleString('id-ID', {maximumFractionDigits: 2});
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const today = new Date().toISOString().slice(0, 10);
+let ponds = [], pid = null, page = 'dashboard', charts = [], rows = [], editId = null;
+
+// Modul CRUD: [kolom, label, tipe, opsi]. x = kolom hasil hitung (generated) yang ditampilkan.
+const MOD = {
+  ponds: {t:'ponds', n:'Kolam / Tebar Benih', i:'🌊', noPond:1, o:'start_date', f:[['pond_name','Nama kolam','text'],['start_date','Tanggal tebar benih','date'],['seed_quantity','Jumlah benih (ekor)','number'],['seed_price','Harga benih / ekor','number'],['initial_capital','Modal awal pemilik (Rp, isi 0 jika tidak ada)','number'],['status','Status','select',['active','harvested']]]},
+  pakan: {t:'feed_logs', n:'Pakan (Pelet)', i:'🌽', o:'date', x:'total_cost', f:[['date','Tanggal','date'],['feed_type','Jenis pelet (mis. PF-1000, FF-999)','text'],['quantity_kg','Jumlah (kg)','number'],['price_per_kg','Harga / kg','number']]},
+  obat: {t:'health_logs', n:'Obat & Probiotik', i:'💊', o:'date', f:[['date','Tanggal','date'],['item_name','Nama obat / probiotik / kapur','text'],['quantity','Jumlah','number'],['total_cost','Total biaya','number']]},
+  operasional: {t:'operational_logs', n:'Operasional', i:'⚡', o:'date', f:[['date','Tanggal','date'],['description','Keterangan','text'],['category','Kategori','select',['listrik','sewa','lainnya']],['amount','Jumlah (Rp)','number']]},
+  populasi: {t:'population_logs', n:'Kematian & Panen', i:'🎣', o:'date', x:'total_revenue', f:[['date','Tanggal','date'],['type','Jenis','select',['mortality','harvest']],['quantity','Jumlah (ekor)','number'],['total_weight_kg','Bobot total (kg) - panen','number'],['price_per_kg','Harga jual / kg - panen','number']]},
+  sampling: {t:'weight_samples', n:'Sampling Bobot', i:'📏', o:'date', f:[['date','Tanggal timbang','date'],['avg_weight_g','Bobot rata-rata (gram/ekor)','number'],['sample_size','Jumlah ikan disampel','number']]}
+};
+const OPT = ['total_weight_kg','price_per_kg','description'];
+const MENU = [['dashboard','📊','Dashboard'], ...Object.entries(MOD).map(([k,m]) => [k,m.i,m.n]), ['laporan','📒','Laporan & Neraca']];
+
+async function loadPonds() {
+  if (sb.supabaseUrl.includes('XXXX')) alert('URL & anon key Supabase di index.html belum diganti.');
+  const r = await sb.from('ponds').select('*').order('start_date', {ascending: false});
+  if (r.error) alert('Gagal terhubung ke database: ' + r.error.message + '\n(Pastikan schema.sql sudah dijalankan & URL/key benar)');
+  ponds = r.data || [];
+  if (!ponds.find(p => p.id === pid)) pid = ponds[0]?.id || null;
+  $('#fs').innerHTML = ponds.map(p => `<option value="${p.id}" ${p.id === pid ? 'selected' : ''}>${esc(p.pond_name)} (${p.status})</option>`).join('') || '<option>- belum ada -</option>';
+}
+function go(p) { page = p; editId = null; render(); }
+
+async function render() {
+  $('#nav').innerHTML = MENU.map(([k,i,n]) => `<button onclick="go('${k}')" class="nav ${k === page ? 'on' : ''} rounded-lg px-3 py-2 text-sm text-left">${i} ${n}</button>`).join('');
+  $('#ttl').textContent = MENU.find(m => m[0] === page)[2];
+  charts.forEach(c => c.destroy()); charts = [];
+  const m = MOD[page];
+  if (m) return crud(m);
+  if (!pid) return $('#main').innerHTML = '<p>Buat kolam dulu di menu 🌊 Kolam / Tebar Benih.</p>';
+  page === 'dashboard' ? dash() : laporan();
+}
+
+// ---------- CRUD GENERIK (tambah, edit, hapus) ----------
+async function crud(m) {
+  let q = sb.from(m.t).select('*').order(m.o, {ascending: false});
+  if (!m.noPond) { if (!pid) return $('#main').innerHTML = '<p>Buat kolam dulu.</p>'; q = q.eq('pond_id', pid); }
+  rows = (await q).data || [];
+  const inp = ([k,l,t,o]) => `<label class="text-xs text-lumpur block">${l}` + (t === 'select'
+    ? `<select name="${k}" class="in">${o.map(x => `<option>${x}</option>`).join('')}</select>`
+    : `<input name="${k}" type="${t}" step="any" class="in" ${OPT.includes(k) ? '' : 'required'} ${t === 'date' ? `value="${today}"` : ''}>`) + '</label>';
+  const cols = m.f.map(f => f[0]).concat(m.x || []);
+  const fmt = (k, v) => v == null ? '-' : /cost|price|amount|revenue|capital/.test(k) ? rp(v) : esc(v);
+  $('#main').innerHTML = `
+    <form id="ff" onsubmit="save(event)" class="card bg-white rounded-xl p-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 mb-4">
+      ${m.f.map(inp).join('')}
+      <div class="flex items-end gap-2"><button id="bs" class="btn flex-1">+ Simpan</button>
+        <button id="bc" type="button" class="hidden border border-stone-300 rounded-lg px-3 py-2 text-sm" onclick="editId=null;render()">Batal</button></div></form>
+    <div class="bg-white rounded-xl overflow-x-auto"><table class="w-full"><tr>${cols.map(c => `<th>${c}</th>`).join('')}<th></th></tr>
+      ${rows.map(r => `<tr>${cols.map(c => `<td>${fmt(c, r[c])}</td>`).join('')}<td>
+        <button class="text-air mr-2" onclick="edit('${r.id}')">Edit</button><button class="text-red-600" onclick="del('${r.id}')">Hapus</button></td></tr>`).join('')}</table></div>`;
+}
+function edit(id) {                       // isi form dengan data baris, mode update
+  const r = rows.find(x => x.id === id), f = $('#ff').elements; editId = id;
+  MOD[page].f.forEach(([k]) => f[k].value = r[k] ?? '');
+  $('#bs').textContent = '✓ Update'; $('#bc').classList.remove('hidden');
+  scrollTo({top: 0, behavior: 'smooth'});
+}
+async function save(e) {
+  e.preventDefault(); const m = MOD[page], o = {};
+  m.f.forEach(([k,,t]) => { const v = e.target.elements[k].value; o[k] = t === 'number' ? (v === '' ? null : +v) : (v || null); });
+  if (!m.noPond && !editId) o.pond_id = pid;
+  const {error} = editId ? await sb.from(m.t).update(o).eq('id', editId) : await sb.from(m.t).insert(o);
+  if (error) return alert(error.message);
+  editId = null; if (m.noPond) await loadPonds();
+  render();
+}
+async function del(id) {
+  if (!confirm('Hapus data ini? Jurnal terkait ikut terhapus.')) return;
+  const m = MOD[page], {error} = await sb.from(m.t).delete().eq('id', id);
+  if (error) return alert(error.message);
+  if (m.noPond) await loadPonds();
+  render();
+}
+
+// ---------- DATA AKUNTANSI ----------
+async function getData() {
+  const by = t => sb.from(t).select('*').eq('pond_id', pid).order('date');
+  const [s, gl, fd, ws] = await Promise.all([
+    sb.from('v_pond_summary').select('*').eq('pond_id', pid).single(),
+    by('general_ledger').order('debit', {ascending: false}), by('feed_logs'), by('weight_samples')]);
+  return {s: s.data, gl: gl.data || [], fd: fd.data || [], ws: ws.data || []};
+}
+/* HPP per kg = Total Biaya Produksi / Total Bobot Panen (kg)
+   Total Biaya = Benih + Pakan + Obat + Operasional (semua akun 'biaya_*' di buku besar).
+   Ikan mati TIDAK mengurangi biaya, sehingga otomatis menaikkan HPP.
+   Laba/Rugi = Total Pendapatan Panen - Total Biaya.
+   FCR (Feed Conversion Ratio) = Total Pakan (kg) / Total Bobot Panen (kg). */
+const hpp = s => s.harvested_kg > 0 ? s.total_cost / s.harvested_kg : null;
+const card = (i, l, v, c) => `<div class="card rounded-xl p-4 text-white ${c}"><div class="text-3xl">${i}</div><div class="text-xs opacity-90 mt-1">${l}</div><div class="text-xl font-semibold">${v}</div></div>`;
+
+async function dash() {
+  const {s, gl, fd, ws} = await getData(); if (!s) return;
+  const h = hpp(s), mort = s.seed_quantity ? s.mortality / s.seed_quantity * 100 : 0;
+  $('#main').innerHTML = `<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+    ${card('🐟','Total Ikan Hidup', nf(s.alive) + ' ekor <span class="text-xs">(mortalitas ' + nf(mort) + '%)</span>','bg-air')}
+    ${card('🌽','Total Biaya', rp(s.total_cost),'bg-lumpur')}
+    ${card('💰','Total Pendapatan', rp(s.total_revenue),'bg-amber-500')}
+    ${card('⚖️','HPP / kg', h ? rp(h) : 'Belum panen','bg-teal-800')}</div>
+    <div class="grid lg:grid-cols-2 gap-4">
+      <div class="card bg-white rounded-xl p-4"><h3 class="font-medium text-lumpur mb-2">Pertumbuhan Bobot (gram) vs Pakan Kumulatif (kg)</h3><canvas id="c1"></canvas>
+        ${ws.length ? '' : '<p class="text-xs text-stone-500 mt-2">Isi menu 📏 Sampling Bobot untuk menampilkan kurva bobot.</p>'}</div>
+      <div class="card bg-white rounded-xl p-4"><h3 class="font-medium text-lumpur mb-2">Komposisi Pengeluaran</h3><canvas id="c2"></canvas></div></div>`;
+  // Grafik 1: rata-rata bobot sampling per tanggal (sumbu kiri) vs pakan kumulatif (sumbu kanan)
+  const days = [...new Set([...fd.map(x => x.date), ...ws.map(x => x.date)])].sort();
+  const avg = d => { const a = ws.filter(x => x.date === d); return a.length ? a.reduce((t, x) => t + +x.avg_weight_g, 0) / a.length : null; };
+  let cum = 0; const feed = days.map(d => cum += fd.filter(x => x.date === d).reduce((t, x) => t + +x.quantity_kg, 0));
+  charts.push(new Chart($('#c1'), {type:'line', data: {labels: days, datasets: [
+    {label:'Bobot rata-rata (g)', data: days.map(avg), borderColor:'#0f766e', backgroundColor:'#0f766e', tension:.3, spanGaps:true, yAxisID:'y'},
+    {label:'Pakan kumulatif (kg)', data: feed, borderColor:'#f2b632', backgroundColor:'#f2b63233', fill:true, yAxisID:'y1'}]},
+    options: {scales: {y: {title: {display:true, text:'gram'}}, y1: {position:'right', grid: {drawOnChartArea:false}, title: {display:true, text:'kg'}}}}}));
+  const cat = {}; gl.filter(x => x.account_type.startsWith('biaya')).forEach(x => cat[x.account_type.slice(6)] = (cat[x.account_type.slice(6)] || 0) + +x.debit);
+  charts.push(new Chart($('#c2'), {type:'doughnut', data: {labels: Object.keys(cat), datasets: [{data: Object.values(cat), backgroundColor:['#0f766e','#f2b632','#5b4636','#5eb8a8','#c9a27a']}]}}));
+}
+
+async function laporan() {
+  const {s, gl, fd} = await getData(); if (!s) return;
+  const h = hpp(s), laba = s.total_revenue - s.total_cost;
+  const feedKg = fd.reduce((t, x) => t + +x.quantity_kg, 0), fcr = s.harvested_kg > 0 ? feedKg / s.harvested_kg : null;
+  const biaya = {}; gl.filter(x => x.account_type.startsWith('biaya')).forEach(x => biaya[x.account_type] = (biaya[x.account_type] || 0) + +x.debit);
+  const D = gl.reduce((t, x) => t + +x.debit, 0), K = gl.reduce((t, x) => t + +x.credit, 0);
+  /* NERACA SEDERHANA (asumsi semua transaksi tunai, tanpa utang):
+     Aset      = Kas = (semua debit - kredit) pada akun 'kas'
+     Kewajiban = 0
+     Ekuitas   = Modal pemilik + Laba/Rugi berjalan
+     Karena Kas = Modal + Pendapatan - Biaya, neraca selalu seimbang bila jurnal benar. */
+  const kas = gl.filter(x => x.account_type === 'kas').reduce((t, x) => t + +x.debit - +x.credit, 0);
+  const modal = gl.filter(x => x.account_type === 'modal_pemilik').reduce((t, x) => t + +x.credit, 0);
+  const eq = modal + laba, ok = Math.abs(kas - eq) < 1;
+  const row = (a, b, c = '') => `<tr class="${c}"><td>${a}</td><td class="text-right">${b}</td></tr>`;
+  $('#main').innerHTML = `<div class="grid lg:grid-cols-3 gap-4 mb-4">
+    <div class="card bg-white rounded-xl p-4"><h3 class="font-semibold text-lumpur mb-2">⚖️ Laporan HPP per Kg</h3>
+      <p class="text-sm">Total biaya produksi: <b>${rp(s.total_cost)}</b></p>
+      <p class="text-sm">Total bobot panen: <b>${nf(s.harvested_kg)} kg</b> (${nf(s.harvested_qty)} ekor)</p>
+      <p class="text-2xl font-semibold text-air mt-2">${h ? rp(h) + ' / kg' : 'Belum ada panen'}</p>
+      <p class="text-xs text-stone-500">HPP = Total Biaya / Total Bobot Panen. Mortalitas: ${nf(s.mortality)} ekor.</p>
+      <p class="text-sm mt-2">FCR: <b>${fcr ? nf(fcr) : '-'}</b> <span class="text-xs text-stone-500">(pakan ${nf(feedKg)} kg / bobot panen)</span></p></div>
+    <div class="card bg-white rounded-xl p-4"><h3 class="font-semibold text-lumpur mb-2">📈 Laba / Rugi</h3>
+      <table class="w-full">${row('Pendapatan panen', rp(s.total_revenue))}
+      ${Object.entries(biaya).map(([k, v]) => row('&nbsp;&nbsp;Beban ' + k.slice(6), '(' + rp(v) + ')', 'text-red-700')).join('')}
+      ${row((laba >= 0 ? 'LABA' : 'RUGI') + ' bersih', rp(laba), 'font-semibold ' + (laba >= 0 ? 'text-air' : 'text-red-700'))}</table></div>
+    <div class="card bg-white rounded-xl p-4"><h3 class="font-semibold text-lumpur mb-2">🧾 Neraca Sederhana</h3>
+      <table class="w-full">${row('<b>ASET</b>', '')}${row('&nbsp;&nbsp;Kas', rp(kas))}${row('Total Aset', rp(kas), 'font-semibold')}
+      ${row('<b>KEWAJIBAN</b>', rp(0))}${row('<b>EKUITAS</b>', '')}${row('&nbsp;&nbsp;Modal pemilik', rp(modal))}${row('&nbsp;&nbsp;Laba/Rugi berjalan', rp(laba))}
+      ${row('Total Kewajiban + Ekuitas', rp(eq), 'font-semibold')}</table>
+      <p class="text-xs mt-1 ${ok ? 'text-air' : 'text-red-700'}">${ok ? 'Seimbang ✓' : 'Tidak seimbang - periksa data'}</p></div></div>
+    <div class="bg-white rounded-xl overflow-x-auto"><h3 class="font-semibold text-lumpur p-3">📒 Jurnal Umum (otomatis)</h3>
+    <table class="w-full"><tr><th>Tanggal</th><th>Keterangan</th><th>Akun</th><th>Debit</th><th>Kredit</th></tr>
+    ${gl.map(x => `<tr><td>${x.date}</td><td>${esc(x.description)}</td><td class="${+x.credit ? 'pl-8' : ''}">${x.account_type}</td><td>${+x.debit ? rp(x.debit) : ''}</td><td>${+x.credit ? rp(x.credit) : ''}</td></tr>`).join('')}
+    <tr class="font-semibold"><td colspan="3">Total (${D === K ? 'seimbang ✓' : 'tidak seimbang'})</td><td>${rp(D)}</td><td>${rp(K)}</td></tr></table></div>`;
+}
+
+(async () => { await loadPonds(); render(); })();   // tanpa login: langsung tampil
+</script></body></html>
